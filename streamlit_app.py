@@ -1,60 +1,75 @@
 import streamlit as st
-import openai
-import streamlit_authenticator as stauth
-from google.oauth2 import id_token
-from google.auth.transport import requests
+from oauthlib.oauth2 import WebApplicationClient
+import requests
+import os
+import json
 
-# Set up OpenAI API Key
-openai.api_key = "YOUR_OPENAI_API_KEY"
-
-# Streamlit page configuration
-st.set_page_config(page_title="Chatbot", layout="centered")
-
-# Authentication configuration
-authenticator = stauth.Authenticate(
-    credentials={
-        "usernames": {
-            "user": {"email": "user@example.com", "name": "User", "password": "your_password"}
-        }
-    },
-    cookie_name="your_cookie_name",
-    key="your_cookie_key",
-    cookie_expiry_days=30,
+# Configuration
+GOOGLE_CLIENT_ID = "YOUR_GOOGLE_CLIENT_ID"
+GOOGLE_CLIENT_SECRET = "YOUR_GOOGLE_CLIENT_SECRET"
+GOOGLE_DISCOVERY_URL = (
+    "https://accounts.google.com/.well-known/openid-configuration"
 )
 
-# Add Google authentication
-def login_with_google():
-    token = st.text_input("Enter Google ID Token", type="password")
-    if token:
-        try:
-            id_info = id_token.verify_oauth2_token(token, requests.Request(), "YOUR_GOOGLE_CLIENT_ID")
-            st.session_state["user"] = id_info["email"]
-            st.success("Logged in successfully")
-            return True
-        except ValueError:
-            st.error("Invalid token. Please try again.")
-            return False
-    return False
+# OAuth 2 client setup
+client = WebApplicationClient(GOOGLE_CLIENT_ID)
 
-# Google login prompt
-if "user" not in st.session_state:
-    st.title("Login with Google")
-    if login_with_google():
-        st.experimental_rerun()
+# Function to get provider configuration
+def get_google_provider_cfg():
+    return requests.get(GOOGLE_DISCOVERY_URL).json()
+
+# Streamlit app
+st.title("Google Login Example")
+
+# Login button
+if "user_info" not in st.session_state:
+    if st.button("Login with Google"):
+        # Get authorization endpoint from Google
+        google_provider_cfg = get_google_provider_cfg()
+        authorization_endpoint = google_provider_cfg["authorization_endpoint"]
+
+        # Create the authorization URL
+        request_uri = client.prepare_request_uri(
+            authorization_endpoint,
+            redirect_uri="http://localhost:8501",
+            scope=["openid", "email", "profile"],
+        )
+        st.write("Please go to this URL and authorize:", request_uri)
 else:
-    st.title(f"Welcome, {st.session_state['user']}")
-    st.write("Chatbot powered by OpenAI")
-    user_input = st.text_input("You:", "")
+    st.write(f"Hello, {st.session_state['user_info']['email']}")
 
-    if st.button("Send"):
-        if user_input:
-            response = openai.ChatCompletion.create(
-                model="gpt-3.5-turbo",
-                messages=[{"role": "user", "content": user_input}]
-            )
-            bot_reply = response.choices[0].message["content"]
-            st.write(f"Chatbot: {bot_reply}")
+# Exchange authorization code for token
+if "code" in st.experimental_get_query_params():
+    code = st.experimental_get_query_params()["code"][0]
 
-    if st.button("Logout"):
-        del st.session_state["user"]
-        st.experimental_rerun()
+    # Get token endpoint
+    google_provider_cfg = get_google_provider_cfg()
+    token_endpoint = google_provider_cfg["token_endpoint"]
+
+    # Prepare token request
+    token_url, headers, body = client.prepare_token_request(
+        token_endpoint,
+        authorization_response=st.experimental_get_query_params()["code"],
+        redirect_url="http://localhost:8501",
+        code=code,
+    )
+
+    # Send the token request
+    token_response = requests.post(
+        token_url,
+        headers=headers,
+        data=body,
+        auth=(GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET),
+    )
+
+    # Parse the token response
+    client.parse_request_body_response(json.dumps(token_response.json()))
+
+    # Get user info endpoint
+    userinfo_endpoint = google_provider_cfg["userinfo_endpoint"]
+    uri, headers, body = client.add_token(userinfo_endpoint)
+    userinfo_response = requests.get(uri, headers=headers, data=body)
+
+    # Store user info in session
+    st.session_state["user_info"] = userinfo_response.json()
+    st.experimental_rerun()
