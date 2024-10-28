@@ -10,7 +10,7 @@ with st.sidebar:
     st.button("Subscribe now!")
     st.markdown("""
     Do you need human-level intelligence? Send us your problem in [this link](#).
-    Cost of assistance depending on complexity, starting from $10 USD
+    Cost of assistance depending on complexity, starting EE from $10 USD
     """)
 
 # Main Content
